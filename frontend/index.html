@@ -22,50 +22,43 @@
   </div>
 </header>
 
-<!-- ===== MAIN LAYOUT ===== -->
-<main class="layout">
-
-  <!-- Left: Character sheets -->
-  <aside class="sidebar-left" id="characterPanel">
-    <h2 class="sidebar-title">Players</h2>
-    <div id="characterCards">
-      <p class="empty-hint">Start a new session to generate characters.</p>
+<!-- ===== NARRATE BAR (send to all) ===== -->
+<div class="narrate-bar">
+  <form class="narrate-form" id="dmForm">
+    <textarea id="dmInput" class="narrate-textarea" rows="2"
+      placeholder="Narrate to all players… (Ctrl+Enter to send)"></textarea>
+    <div class="narrate-actions">
+      <button type="submit" class="btn btn-primary">▶ Send to All</button>
+      <button type="button" class="btn btn-danger" id="btnStartCombat">⚔ Combat</button>
+      <button type="button" class="btn btn-ghost" id="btnRollDice">🎲 Roll</button>
     </div>
-  </aside>
+  </form>
+</div>
 
-  <!-- Center: Game log -->
-  <section class="log-panel">
-    <div class="log-scroll" id="gameLog">
-      <div class="log-entry log-system">
-        <span class="log-content">Welcome to play-dm. Click <strong>New Session</strong> to begin.</span>
+<!-- ===== STATUS LOG (system messages, always visible) ===== -->
+<div id="statusLog" class="status-log"></div>
+
+<!-- ===== COLUMNS AREA ===== -->
+<div class="columns-wrap">
+  <div class="columns-area" id="columnsArea">
+    <div class="no-session-hint">
+      <p>Click <strong>New Session</strong> to generate your party.</p>
+    </div>
+  </div>
+
+  <!-- Combat tracker: right panel, visible only during combat -->
+  <aside class="combat-panel hidden" id="combatPanel">
+    <div class="combat-panel-header">
+      <span>⚔ Combat</span>
+      <div class="combat-panel-btns">
+        <button class="btn btn-primary btn-sm" id="btnNextTurn">Next ▶</button>
+        <button class="btn btn-ghost btn-sm" id="btnEndCombat">End</button>
       </div>
     </div>
-
-    <!-- DM Input -->
-    <form class="input-bar" id="dmForm">
-      <textarea
-        id="dmInput"
-        class="dm-textarea"
-        placeholder="Narrate a scene, describe what happens, ask players to act…"
-        rows="2"
-      ></textarea>
-      <div class="input-actions">
-        <button type="submit" class="btn btn-primary">Send</button>
-        <button type="button" class="btn btn-danger" id="btnStartCombat">⚔ Start Combat</button>
-        <button type="button" class="btn btn-ghost" id="btnRollDice">🎲 Roll Dice</button>
-      </div>
-    </form>
-  </section>
-
-  <!-- Right: Combat tracker -->
-  <aside class="sidebar-right" id="combatPanel">
-    <h2 class="sidebar-title">Combat</h2>
-    <div id="combatTracker">
-      <p class="empty-hint">No active combat.</p>
-    </div>
+    <div class="combat-round" id="combatRound"></div>
+    <div id="combatTracker"></div>
   </aside>
-
-</main>
+</div>
 
 <!-- ===== MODALS ===== -->
 
@@ -81,7 +74,7 @@
         <option value="4">4</option>
       </select>
     </label>
-    <label>Campaign Theme (optional)<input type="text" id="inTheme" placeholder="e.g. gothic horror, classic dungeon crawl" /></label>
+    <label>Campaign Theme (optional)<input type="text" id="inTheme" placeholder="e.g. gothic horror, dungeon crawl" /></label>
     <div class="modal-actions">
       <button class="btn btn-primary" id="btnConfirmNewSession">Generate Characters</button>
       <button class="btn btn-ghost modal-cancel">Cancel</button>
@@ -93,7 +86,7 @@
 <div class="modal-overlay hidden" id="modalStartCombat">
   <div class="modal">
     <h2>Start Combat</h2>
-    <p class="modal-hint">Add enemies below. Each row is one enemy type.</p>
+    <p class="modal-hint">Add enemies below.</p>
     <div id="enemyList">
       <div class="enemy-row">
         <input type="text" placeholder="Name" class="enemy-name" />
@@ -147,12 +140,6 @@
       <button class="btn btn-ghost modal-cancel">Cancel</button>
     </div>
   </div>
-</div>
-
-<!-- Combat Actions (shown when combat active) -->
-<div class="combat-toolbar hidden" id="combatToolbar">
-  <button class="btn btn-primary btn-sm" id="btnNextTurn">Next Turn ▶</button>
-  <button class="btn btn-ghost btn-sm" id="btnEndCombat">End Combat</button>
 </div>
 
 <script src="/static/app.js"></script>

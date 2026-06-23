@@ -47,6 +47,8 @@ class Character(BaseModel):
     inventory: list[InventoryItem] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
     death_saves: dict[str, int] = Field(default_factory=lambda: {"successes": 0, "failures": 0})
+    # Big Five personality trait scores (0–100 each, rolled with d100)
+    big_five: dict[str, int] = Field(default_factory=dict)
 
 
 class Enemy(BaseModel):
@@ -88,6 +90,7 @@ class LogEntry(BaseModel):
 class GameState(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_name: str = "New Campaign"
+    session_theme: str = ""
     characters: dict[str, Character] = Field(default_factory=dict)
     player_conversation_histories: dict[str, list[dict]] = Field(default_factory=dict)
     combat: CombatState = Field(default_factory=CombatState)

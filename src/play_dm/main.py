@@ -1,11 +1,16 @@
 """FastAPI application — DnD 5e DM tool with LLM players."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("play_dm")
 
 import anthropic
 from dotenv import load_dotenv
@@ -42,6 +47,25 @@ SAVES_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="play-dm")
 
+
+@app.on_event("startup")
+async def _setup_logging() -> None:
+    """Configure play_dm logging after uvicorn has fully set up its own handlers."""
+    logger = logging.getLogger("play_dm")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    # Replace any stale handlers (handles hot-reload)
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S"
+    ))
+    logger.addHandler(handler)
+    logger.info("play_dm logger ready")
+
+
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
@@ -64,11 +88,15 @@ async def list_saves() -> JSONResponse:
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
+    log.info("WebSocket connected")
 
     # Each connection gets its own game state and Anthropic client
     state = GameState()
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    client = anthropic.Anthropic(api_key=api_key) if api_key else None
+    # max_retries=4 so transient Anthropic 500s are retried automatically
+    client = anthropic.Anthropic(api_key=api_key, max_retries=4) if api_key else None
+    # Tracks the most recent speech from each player so siblings get party context
+    party_context: dict[str, str] = {}
 
     async def send(msg: dict[str, Any]) -> None:
         await ws.send_text(json.dumps(msg))
@@ -81,6 +109,93 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     async def send_state() -> None:
         await send({"type": "state_update", "state": state.model_dump(mode="json")})
 
+    async def handle_player_response(char: Any, player_id: str, dm_message: str) -> None:
+        """Call LLM for one player, log their response, auto-roll dice. Updates party_context."""
+        nonlocal state
+        # Prepend recent actions from all other players so this LLM knows what its allies did
+        others = [(pid, v) for pid, v in party_context.items() if pid != player_id]
+        augmented = dm_message
+        if others:
+            lines = " | ".join(v for _, v in others)
+            augmented = f"[Party context — your allies just did: {lines}]\n\n{dm_message}"
+
+        history = state.player_conversation_histories.get(player_id, [])
+        parsed, new_history = get_player_response(client, char, history, augmented)
+        state.player_conversation_histories[player_id] = new_history
+        log.info("%s responded (action_type=%s)", char.name, parsed.get("action_type"))
+
+        if parsed.get("speech"):
+            party_context[player_id] = f'{char.name}: "{parsed["speech"]}"'
+
+        if parsed.get("speech"):
+            await send_log("player_speech", f'**{char.name}**: "{parsed["speech"]}"', player_id=player_id)
+
+        if parsed.get("action_description"):
+            await send_log(
+                "player_action",
+                f"{char.name} {parsed['action_description']}",
+                player_id=player_id,
+                metadata={"action_type": parsed.get("action_type", "none")},
+            )
+
+        action_type = parsed.get("action_type", "none")
+        details = parsed.get("action_details", {})
+
+        if action_type == "attack":
+            weapon = details.get("weapon_or_spell") or "weapon"
+            atk_mod = ability_modifier(char.ability_scores.strength)
+            total, rolls, mod = roll_with_modifier("1d20", atk_mod + char.proficiency_bonus)
+            await send({"type": "dice_roll", "dice": "1d20", "rolls": rolls,
+                        "modifier": atk_mod + char.proficiency_bonus, "total": total,
+                        "context": f"{char.name} attacks with {weapon}",
+                        "character_name": char.name, "player_id": player_id})
+            await send_log("dice_roll",
+                           f"{char.name} rolls to attack with {weapon}: {total} (d20={rolls[0]}, mod={mod:+})",
+                           player_id=player_id,
+                           metadata={"dice": "1d20", "total": total, "rolls": rolls, "modifier": mod})
+
+        elif action_type == "skill_check":
+            skill = details.get("skill") or "Perception"
+            try:
+                bonus = skill_bonus(char, skill)
+            except ValueError:
+                bonus = 0
+            total, rolls, mod = roll_with_modifier("1d20", bonus)
+            await send({"type": "dice_roll", "dice": "1d20", "rolls": rolls, "modifier": bonus,
+                        "total": total, "context": f"{char.name} {skill} check",
+                        "character_name": char.name, "player_id": player_id})
+            await send_log("dice_roll",
+                           f"{char.name} rolls {skill} check: {total} (d20={rolls[0]}, mod={bonus:+})",
+                           player_id=player_id,
+                           metadata={"dice": "1d20", "total": total, "skill": skill})
+
+        elif action_type == "saving_throw":
+            ability = details.get("ability") or "Dexterity"
+            try:
+                bonus = saving_throw_bonus(char, ability)
+            except ValueError:
+                bonus = 0
+            total, rolls, mod = roll_with_modifier("1d20", bonus)
+            await send({"type": "dice_roll", "dice": "1d20", "rolls": rolls, "modifier": bonus,
+                        "total": total, "context": f"{char.name} {ability} saving throw",
+                        "character_name": char.name, "player_id": player_id})
+            await send_log("dice_roll",
+                           f"{char.name} rolls {ability} saving throw: {total} (d20={rolls[0]}, mod={bonus:+})",
+                           player_id=player_id,
+                           metadata={"dice": "1d20", "total": total, "ability": ability})
+
+        elif action_type == "spell":
+            spell_name = details.get("weapon_or_spell") or "spell"
+            slot_level = int(details.get("spell_slot_level") or 0)
+            if slot_level > 0:
+                try:
+                    state.characters[player_id] = consume_spell_slot(char, slot_level)
+                    await send_log("system",
+                                   f"{char.name} expends a level-{slot_level} spell slot for {spell_name}.",
+                                   player_id=player_id)
+                except ValueError as exc:
+                    await send_log("system", f"{char.name}: {exc}", player_id=player_id)
+
     try:
         while True:
             raw = await ws.receive_text()
@@ -91,6 +206,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 continue
 
             cmd = msg.get("type", "")
+            log.info("WS cmd: %s", cmd)
 
             # ------------------------------------------------------------------
             if cmd == "new_session":
@@ -100,23 +216,33 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
                 player_count = max(2, min(4, int(msg.get("player_count", 3))))
                 theme = str(msg.get("theme", ""))
-                state = GameState(session_name=msg.get("session_name", "New Campaign"))
+                state = GameState(
+                    session_name=msg.get("session_name", "New Campaign"),
+                    session_theme=theme,
+                )
 
                 await send_log("system", f"Starting new session with {player_count} LLM players…")
 
                 for i in range(1, player_count + 1):
+                    if i > 1:
+                        await asyncio.sleep(1)  # brief pause between calls to avoid rate limits
                     await send_log("system", f"Generating character for Player {i}…")
+                    existing_names = [c.name for c in state.characters.values()]
                     try:
-                        char = generate_character(client, i, theme)
+                        char = generate_character(client, i, theme, existing_names=existing_names)
                         state.characters[char.id] = char
                         state.player_conversation_histories[char.id] = []
+                        log.info("Generated character: %s the %s %s", char.name, char.race, char.character_class)
                         await send_log(
                             "system",
                             f"Player {i}: {char.name} the {char.race} {char.character_class} (HP {char.max_hp}, AC {char.armor_class})",
                         )
+                        await send_state()  # Show column immediately — don't wait for all chars
                     except Exception as exc:
+                        log.error("Character gen failed for player %d: %s", i, exc)
                         await send({"type": "error", "message": f"Character gen failed for player {i}: {exc}"})
 
+                # Final state_update in case any character failed and partial state needs sync
                 await send_state()
 
             # ------------------------------------------------------------------
@@ -132,116 +258,68 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await send_log("dm_narration", text)
 
                 for player_id, char in state.characters.items():
-                    history = state.player_conversation_histories.get(player_id, [])
                     try:
-                        parsed, new_history = get_player_response(client, char, history, text)
-                        state.player_conversation_histories[player_id] = new_history
-
-                        # Log speech
-                        if parsed.get("speech"):
-                            await send_log(
-                                "player_speech",
-                                f'**{char.name}**: "{parsed["speech"]}"',
-                                player_id=player_id,
-                            )
-
-                        # Log action
-                        if parsed.get("action_description"):
-                            await send_log(
-                                "player_action",
-                                f"{char.name} {parsed['action_description']}",
-                                player_id=player_id,
-                                metadata={"action_type": parsed.get("action_type", "none")},
-                            )
-
-                        # Auto-roll for actions that need dice
-                        action_type = parsed.get("action_type", "none")
-                        details = parsed.get("action_details", {})
-
-                        if action_type == "attack":
-                            weapon = details.get("weapon_or_spell") or "weapon"
-                            atk_mod = ability_modifier(char.ability_scores.strength)
-                            total, rolls, mod = roll_with_modifier("1d20", atk_mod + char.proficiency_bonus)
-                            await send({
-                                "type": "dice_roll",
-                                "dice": "1d20",
-                                "rolls": rolls,
-                                "modifier": atk_mod + char.proficiency_bonus,
-                                "total": total,
-                                "context": f"{char.name} attacks with {weapon}",
-                                "character_name": char.name,
-                            })
-                            await send_log(
-                                "dice_roll",
-                                f"{char.name} rolls to attack with {weapon}: {total} (d20={rolls[0]}, mod={mod:+})",
-                                player_id=player_id,
-                                metadata={"dice": "1d20", "total": total, "rolls": rolls, "modifier": mod},
-                            )
-
-                        elif action_type == "skill_check":
-                            skill = details.get("skill") or "Perception"
-                            try:
-                                bonus = skill_bonus(char, skill)
-                            except ValueError:
-                                bonus = 0
-                            total, rolls, mod = roll_with_modifier("1d20", bonus)
-                            await send({
-                                "type": "dice_roll",
-                                "dice": "1d20",
-                                "rolls": rolls,
-                                "modifier": bonus,
-                                "total": total,
-                                "context": f"{char.name} {skill} check",
-                                "character_name": char.name,
-                            })
-                            await send_log(
-                                "dice_roll",
-                                f"{char.name} rolls {skill} check: {total} (d20={rolls[0]}, mod={bonus:+})",
-                                player_id=player_id,
-                                metadata={"dice": "1d20", "total": total, "skill": skill},
-                            )
-
-                        elif action_type == "saving_throw":
-                            ability = details.get("ability") or "Dexterity"
-                            try:
-                                bonus = saving_throw_bonus(char, ability)
-                            except ValueError:
-                                bonus = 0
-                            total, rolls, mod = roll_with_modifier("1d20", bonus)
-                            await send({
-                                "type": "dice_roll",
-                                "dice": "1d20",
-                                "rolls": rolls,
-                                "modifier": bonus,
-                                "total": total,
-                                "context": f"{char.name} {ability} saving throw",
-                                "character_name": char.name,
-                            })
-                            await send_log(
-                                "dice_roll",
-                                f"{char.name} rolls {ability} saving throw: {total} (d20={rolls[0]}, mod={bonus:+})",
-                                player_id=player_id,
-                                metadata={"dice": "1d20", "total": total, "ability": ability},
-                            )
-
-                        elif action_type == "spell":
-                            spell_name = details.get("weapon_or_spell") or "spell"
-                            slot_level = int(details.get("spell_slot_level") or 0)
-                            if slot_level > 0:
-                                try:
-                                    state.characters[player_id] = consume_spell_slot(char, slot_level)
-                                    await send_log(
-                                        "system",
-                                        f"{char.name} expends a level-{slot_level} spell slot for {spell_name}.",
-                                        player_id=player_id,
-                                    )
-                                except ValueError as exc:
-                                    await send_log("system", f"{char.name}: {exc}", player_id=player_id)
-
+                        await handle_player_response(char, player_id, text)
                     except Exception as exc:
+                        log.error("LLM error for %s: %s", char.name, exc)
                         await send({"type": "error", "message": f"LLM error for {char.name}: {exc}"})
 
                 await send_state()
+
+            # ------------------------------------------------------------------
+            elif cmd == "dm_reply":
+                if not client:
+                    await send({"type": "error", "message": "ANTHROPIC_API_KEY not set."})
+                    continue
+
+                player_id = str(msg.get("player_id", ""))
+                text = str(msg.get("text", "")).strip()
+                if not text or player_id not in state.characters:
+                    continue
+
+                char = state.characters[player_id]
+                await send_log("dm_reply", text, player_id=player_id)
+
+                try:
+                    await handle_player_response(char, player_id, text)
+                except Exception as exc:
+                    log.error("LLM error for %s: %s", char.name, exc)
+                    await send({"type": "error", "message": f"LLM error for {char.name}: {exc}"})
+
+                await send_state()
+
+            # ------------------------------------------------------------------
+            elif cmd == "dm_reroll":
+                if not client:
+                    await send({"type": "error", "message": "ANTHROPIC_API_KEY not set."})
+                    continue
+
+                player_id = str(msg.get("player_id", ""))
+                if player_id not in state.characters:
+                    continue
+
+                try:
+                    player_num = int(player_id.replace("player-", ""))
+                except ValueError:
+                    player_num = 1
+
+                existing_names = [c.name for pid, c in state.characters.items() if pid != player_id]
+                theme = state.session_theme
+
+                await send_log("system", f"Rerolling character for Player {player_num}…")
+                # Signal frontend to clear this player's column messages
+                await send({"type": "player_reset", "player_id": player_id})
+                try:
+                    char = generate_character(client, player_num, theme, existing_names=existing_names)
+                    state.characters[player_id] = char
+                    state.player_conversation_histories[player_id] = []
+                    party_context.pop(player_id, None)
+                    log.info("Rerolled: %s the %s %s", char.name, char.race, char.character_class)
+                    await send_log("system", f"Rerolled Player {player_num}: {char.name} the {char.race} {char.character_class}")
+                    await send_state()
+                except Exception as exc:
+                    log.error("Reroll failed for %s: %s", player_id, exc)
+                    await send({"type": "error", "message": f"Reroll failed: {exc}"})
 
             # ------------------------------------------------------------------
             elif cmd == "start_combat":
@@ -387,4 +465,4 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await send({"type": "error", "message": f"Unknown command: {cmd!r}"})
 
     except WebSocketDisconnect:
-        pass
+        log.info("WebSocket disconnected")

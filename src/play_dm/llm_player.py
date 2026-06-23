@@ -2,14 +2,66 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 import anthropic
 
+from play_dm.dice import roll as _roll_dice
 from play_dm.models import AbilityScores, Character, InventoryItem
 
-MODEL = "claude-3-5-haiku-20241022"
+log = logging.getLogger("play_dm.llm")
+MODEL = "claude-haiku-4-5"
+
+# ── Big Five personality trait helpers ───────────────────────────────────────
+
+_BIG_FIVE_TRAITS = ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"]
+
+_BIG_FIVE_LOW = {
+    "openness":          "conventional, prefers routine, skeptical of new ideas",
+    "conscientiousness": "impulsive and spontaneous, acts without planning, disorganised",
+    "extraversion":      "introverted and reserved, quiet, uncomfortable in the spotlight",
+    "agreeableness":     "competitive and blunt, self-interested, suspicious of others",
+    "neuroticism":       "emotionally stable and calm, rarely rattled",
+}
+_BIG_FIVE_HIGH = {
+    "openness":          "curious and imaginative, loves new ideas and experiences",
+    "conscientiousness": "disciplined and reliable, plans carefully, follows through",
+    "extraversion":      "outgoing and energetic, talkative, seeks excitement and company",
+    "agreeableness":     "cooperative and empathetic, trusting, eager to help",
+    "neuroticism":       "anxious and emotionally reactive, worries easily, moody",
+}
+
+
+def _roll_big_five() -> dict[str, int]:
+    """Roll 5 × d100 and return a Big Five score dict."""
+    return {trait: _roll_dice("1d100")[0] for trait in _BIG_FIVE_TRAITS}
+
+
+def _big_five_descriptor(score: int) -> str:
+    if score <= 20:   return "very low"
+    elif score <= 40: return "low"
+    elif score <= 60: return "moderate"
+    elif score <= 80: return "high"
+    else:             return "very high"
+
+
+def _big_five_text(score: int, trait: str) -> str:
+    level = _big_five_descriptor(score)
+    if score <= 50:
+        desc = _BIG_FIVE_LOW[trait]
+    else:
+        desc = _BIG_FIVE_HIGH[trait]
+    return f"{score:3d}/100 ({level}) — {desc}"
+
+
+def _format_big_five_block(big_five: dict[str, int]) -> str:
+    lines = []
+    for trait in _BIG_FIVE_TRAITS:
+        score = big_five.get(trait, 50)
+        lines.append(f"  {trait.capitalize():<18} {_big_five_text(score, trait)}")
+    return "\n".join(lines)
 
 _ACTION_TYPES = frozenset(
     {"attack", "spell", "skill_check", "saving_throw", "move", "item_use", "free_action", "none"}
@@ -60,23 +112,38 @@ _CHAR_SCHEMA = """
 
 
 def generate_character(
-    client: anthropic.Anthropic, player_num: int, theme: str = ""
+    client: anthropic.Anthropic,
+    player_num: int,
+    theme: str = "",
+    existing_names: list[str] | None = None,
 ) -> Character:
     """Ask an LLM to create a unique DnD 5e character and return a Character model."""
+    big_five = _roll_big_five()
     theme_clause = f" The campaign theme is: {theme}." if theme else ""
+    avoid_clause = (
+        f" The character's name must be completely different from these already-used names: {', '.join(existing_names)}."
+        if existing_names
+        else ""
+    )
+    big_five_clause = (
+        f"\n\nThis character's Big Five personality scores (d100 rolls) are:\n{_format_big_five_block(big_five)}\n"
+        "Write the personality_traits field to authentically reflect these scores in 1-2 sentences."
+    )
     prompt = (
-        f"Create a unique level-1 Dungeons & Dragons 5th Edition character for player {player_num}.{theme_clause} "
+        f"Create a unique level-1 Dungeons & Dragons 5th Edition character for player {player_num}.{theme_clause}{avoid_clause} "
         f"Include appropriate starting equipment and class features. "
-        f"For spellcasters, include spell slots, spells_known, and cantrips. "
+        f"For spellcasters, include spell slots, spells_known, and cantrips.{big_five_clause}\n"
         f"Respond ONLY with this exact JSON schema (no extra fields):\n{_CHAR_SCHEMA}"
     )
 
+    log.info("generate_character: calling %s for player %d", MODEL, player_num)
     response = client.messages.create(
         model=MODEL,
         max_tokens=1024,
         system=_CHAR_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
+    log.info("generate_character: received response (%d chars)", len(response.content[0].text))
     raw = response.content[0].text.strip()
 
     # Strip markdown code fences if present
@@ -113,6 +180,7 @@ def generate_character(
         spells_known=data.get("spells_known", []),
         cantrips=data.get("cantrips", []),
         inventory=inventory,
+        big_five=big_five,
     )
     return char
 
@@ -137,13 +205,18 @@ def _build_system_prompt(char: Character) -> str:
     )
 
     conditions_str = ", ".join(char.conditions) if char.conditions else "None"
+    big_five_section = (
+        f"\nPERSONALITY (Big Five d100):\n{_format_big_five_block(char.big_five)}"
+        if char.big_five
+        else ""
+    )
 
     return f"""You are playing {char.name}, a {char.race} {char.character_class} (Level {char.level}) in a Dungeons & Dragons 5th Edition campaign.
 
 CHARACTER SHEET
 Name: {char.name} | Race: {char.race} | Class: {char.character_class} (Level {char.level})
 Background: {char.background}
-Personality: {char.personality_traits}
+Personality: {char.personality_traits}{big_five_section}
 
 ABILITY SCORES
 STR {char.ability_scores.strength} ({_modifier_str(char.ability_scores.strength)}) | \
@@ -159,8 +232,8 @@ INVENTORY: {inventory_str}{spells_section}
 
 RESPONSE FORMAT — you MUST reply with ONLY valid JSON, no extra text:
 {{
-  "speech": "<what your character says aloud, or empty string>",
-  "action_description": "<narrative description of what your character attempts to do>",
+  "speech": "<REQUIRED. One plain sentence: what do you DO? See rules below.>",
+  "action_description": "<one short clause, third-person, e.g. 'asks the bartender about work'>",
   "action_type": "<one of: attack, spell, skill_check, saving_throw, move, item_use, free_action, none>",
   "action_details": {{
     "target": "<name of target, or null>",
@@ -171,9 +244,37 @@ RESPONSE FORMAT — you MUST reply with ONLY valid JSON, no extra text:
   }}
 }}
 
-You are a PLAYER, not the DM. Describe only your character's intentions — not outcomes. Stay in character. \
-Be creative but act consistently with your character's personality and abilities. \
-If you are unconscious (0 HP), you can only roll death saving throws."""
+RULES FOR SPEECH:
+- Write like a player at a table telling the DM what they do: plain, direct, first-person.
+- NO asterisks. NO theatrical dialogue. NO dramatic flair. Just state the action.
+  BAD: "I nod to the bartender and take a sip, glancing over at my companions."
+  GOOD: "I ask the bartender if he knows of any work or trouble in town."
+  BAD: "I scan the room casually while finishing my drink."
+  GOOD: "I want to look around the tavern for anyone who seems suspicious — can I roll Perception?"
+
+RULES FOR WHAT TO DO — BE AN ACTIVE PLAYER:
+- You are playing a game. Every response must ADVANCE the scene.
+- Passive ambient actions (sipping a drink, nodding, glancing around) are NOT valid responses unless you have nothing else to do and you explicitly say so.
+- Ask the DM for information: "I ask the innkeeper if there are any rumors about the old mine."
+- Investigate things: "I want to get a closer look at that cloaked figure in the corner."
+- Talk to NPCs or party members with purpose: "I ask the guard what happened here."
+- Use your skills and abilities: "I try to use Insight on the merchant to see if he's lying."
+- Make decisions that move things forward: "I suggest we head to the market to find supplies."
+- If you don't know what to do, pick the most interesting option available and do it.
+- Think: what does {char.name} WANT right now? Do that. Don't wait.
+
+PERSONALITY RULES — your Big Five scores above are binding:
+- They shape WHAT you do and HOW you engage, not just how you phrase it.
+- Low Extraversion → you hold back and observe before acting; you don't volunteer first.
+- High Extraversion → you're the first to speak or act; you seek attention.
+- Low Agreeableness → you're skeptical, blunt, put your own goals first.
+- High Agreeableness → you help, cooperate, check on others before yourself.
+- Low Conscientiousness → you act on impulse; you don't plan ahead.
+- High Conscientiousness → you think before acting; you ask clarifying questions first.
+- Low Neuroticism → you're calm and steady even in tense situations.
+- High Neuroticism → you're on edge; you react to threats or uncertainty quickly.
+- Low Openness → you stick to what you know; you're skeptical of unusual ideas.
+- High Openness → you're drawn to mysteries, strange things, and new possibilities."""
 
 
 def get_player_response(
@@ -188,6 +289,7 @@ def get_player_response(
     """
     updated_history = list(history) + [{"role": "user", "content": dm_message}]
 
+    log.info("get_player_response: calling %s for %s", MODEL, char.name)
     response = client.messages.create(
         model=MODEL,
         max_tokens=512,
@@ -195,6 +297,7 @@ def get_player_response(
         messages=updated_history,
     )
     reply_text = response.content[0].text.strip()
+    log.info("get_player_response: %s replied (%d chars, action_type pending parse)", char.name, len(reply_text))
 
     # Strip markdown code fences if present
     reply_text = re.sub(r"^```(?:json)?\s*", "", reply_text)
@@ -220,6 +323,10 @@ def get_player_response(
     # Sanitize action_type
     if parsed.get("action_type") not in _ACTION_TYPES:
         parsed["action_type"] = "none"
+
+    # Ensure speech is never blank — fall back to action_description
+    if not parsed.get("speech") and parsed.get("action_description"):
+        parsed["speech"] = parsed["action_description"]
 
     updated_history = updated_history + [{"role": "assistant", "content": reply_text}]
     return parsed, updated_history
