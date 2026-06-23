@@ -1,0 +1,480 @@
+/* =====================================================================
+   play-dm — Dark DnD Theme
+   ===================================================================== */
+
+:root {
+  --bg-dark:       #0f0f1a;
+  --bg-panel:      #16162a;
+  --bg-card:       #1e1e35;
+  --bg-input:      #1a1a2e;
+  --bg-hover:      #252540;
+
+  --border:        #2e2e50;
+  --border-accent: #4a3f6b;
+
+  --gold:          #c9a84c;
+  --gold-light:    #e8c97a;
+  --text-primary:  #e8e6f0;
+  --text-muted:    #8888aa;
+  --text-dim:      #55556a;
+
+  --red:           #e05252;
+  --green:         #52b788;
+  --blue:          #6baed6;
+  --purple:        #9b72cf;
+  --orange:        #e07b39;
+
+  --font-body:     'Segoe UI', system-ui, sans-serif;
+  --font-mono:     'Consolas', monospace;
+
+  --header-h:      56px;
+  --sidebar-w:     280px;
+  --input-h:       130px;
+  --radius:        6px;
+}
+
+/* ----- Reset ----- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg-dark);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ----- Scrollbar ----- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-dark); }
+::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 3px; }
+
+/* =====================================================================
+   HEADER
+   ===================================================================== */
+.header {
+  height: var(--header-h);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+}
+
+.logo {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+  margin-right: 1rem;
+}
+
+.session-name {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.header-right { display: flex; align-items: center; gap: 0.5rem; }
+
+.ws-indicator {
+  font-size: 1.2rem;
+  color: var(--red);
+  transition: color 0.3s;
+}
+.ws-indicator.connected { color: var(--green); }
+
+/* =====================================================================
+   LAYOUT
+   ===================================================================== */
+.layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr var(--sidebar-w);
+  height: calc(100vh - var(--header-h));
+  margin-top: var(--header-h);
+  overflow: hidden;
+}
+
+/* ----- Sidebars ----- */
+.sidebar-left,
+.sidebar-right {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.sidebar-right { border-right: none; border-left: 1px solid var(--border); }
+
+.sidebar-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+
+/* =====================================================================
+   CHARACTER CARDS
+   ===================================================================== */
+.char-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+}
+
+.char-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.char-name {
+  font-weight: 700;
+  color: var(--gold-light);
+  font-size: 0.95rem;
+}
+
+.char-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.char-hp-bar-wrap {
+  margin: 0.5rem 0 0.25rem;
+}
+.char-hp-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.char-hp-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.char-hp-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.4s, background 0.4s;
+}
+
+.char-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+}
+.char-stat { text-align: center; }
+.char-stat-label { color: var(--text-dim); font-size: 0.65rem; letter-spacing: 0.04em; }
+.char-stat-value { color: var(--text-primary); font-weight: 600; }
+
+.char-conditions {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.condition-tag {
+  background: var(--red);
+  color: #fff;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.char-details { margin-top: 0.5rem; display: none; }
+.char-details.open { display: block; }
+.char-details-section { margin-top: 0.4rem; font-size: 0.72rem; color: var(--text-muted); }
+.char-details-section strong { color: var(--text-primary); }
+
+/* =====================================================================
+   GAME LOG
+   ===================================================================== */
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.log-entry {
+  border-left: 3px solid var(--border);
+  padding: 0.4rem 0.75rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--bg-card);
+  font-size: 0.875rem;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Type-specific styling */
+.log-dm_narration {
+  border-color: var(--gold);
+  font-style: italic;
+  color: #d4c9a8;
+}
+.log-player_speech { border-color: var(--blue); }
+.log-player_action { border-color: var(--purple); color: var(--text-muted); font-size: 0.82rem; }
+.log-dice_roll    { border-color: var(--green); }
+.log-combat       { border-color: var(--red); }
+.log-system       { border-color: var(--text-dim); color: var(--text-muted); font-size: 0.8rem; }
+.log-error        { border-color: var(--red); background: #2a1010; color: var(--red); }
+
+.log-content strong { color: var(--gold-light); }
+.log-content em { color: var(--text-muted); }
+
+.dice-result {
+  display: inline-block;
+  background: var(--green);
+  color: #0a2010;
+  font-weight: 700;
+  font-size: 1.05rem;
+  padding: 1px 8px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.dice-detail {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* =====================================================================
+   INPUT BAR
+   ===================================================================== */
+.input-bar {
+  border-top: 1px solid var(--border);
+  padding: 0.75rem 1.25rem;
+  background: var(--bg-input);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dm-textarea {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.dm-textarea:focus { border-color: var(--gold); }
+
+.input-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+/* =====================================================================
+   COMBAT TRACKER
+   ===================================================================== */
+.combatant-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.65rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+.combatant-row.active-turn {
+  border-color: var(--gold);
+  background: #1e1a10;
+}
+.combatant-row.dead { opacity: 0.4; }
+
+.combatant-name { font-weight: 600; }
+.combatant-initiative { color: var(--text-muted); font-size: 0.72rem; }
+.combatant-hp { color: var(--green); font-size: 0.72rem; white-space: nowrap; }
+.combatant-hp.low { color: var(--orange); }
+.combatant-hp.critical { color: var(--red); }
+
+.combatant-hp-bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-top: 3px;
+  overflow: hidden;
+}
+.combatant-hp-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 2px;
+  transition: width 0.3s, background 0.3s;
+}
+
+.combatant-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+/* =====================================================================
+   COMBAT TOOLBAR
+   ===================================================================== */
+.combat-toolbar {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.5rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--gold);
+  border-radius: 2rem;
+  padding: 0.4rem 1rem;
+  z-index: 200;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+/* =====================================================================
+   BUTTONS
+   ===================================================================== */
+.btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--gold);
+  color: #0a0a0a;
+  border-color: var(--gold);
+}
+.btn-primary:hover:not(:disabled) { background: var(--gold-light); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+.btn-ghost:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+
+.btn-danger {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+.btn-danger:hover:not(:disabled) { background: #f06060; }
+
+.btn-sm { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
+
+/* =====================================================================
+   MODALS
+   ===================================================================== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  width: 420px;
+  max-width: 95vw;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.modal h2 { color: var(--gold); font-size: 1rem; margin-bottom: 0.25rem; }
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.modal input[type="text"],
+.modal input[type="number"],
+.modal select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  padding: 0.35rem 0.6rem;
+  outline: none;
+}
+.modal input:focus, .modal select:focus { border-color: var(--gold); }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.modal-hint { font-size: 0.78rem; color: var(--text-muted); }
+
+/* ===== Enemy rows in Start Combat modal ===== */
+.enemy-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.enemy-row input { padding: 0.25rem 0.4rem; }
+#enemyList { display: flex; flex-direction: column; }
+
+/* ===== Saves list ===== */
+.save-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  margin-bottom: 0.35rem;
+}
+.save-item-name { font-size: 0.85rem; }
+
+/* =====================================================================
+   UTILITIES
+   ===================================================================== */
+.hidden { display: none !important; }
+.empty-hint { color: var(--text-dim); font-size: 0.8rem; font-style: italic; }

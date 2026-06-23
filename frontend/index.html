@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>play-dm — DnD 5e DM Console</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="header">
+  <div class="header-left">
+    <span class="logo">⚔ play-dm</span>
+    <span class="session-name" id="sessionName">No Session</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost" id="btnNewSession">New Session</button>
+    <button class="btn btn-ghost" id="btnSave">Save</button>
+    <button class="btn btn-ghost" id="btnLoad">Load</button>
+    <span class="ws-indicator" id="wsIndicator" title="WebSocket status">●</span>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<main class="layout">
+
+  <!-- Left: Character sheets -->
+  <aside class="sidebar-left" id="characterPanel">
+    <h2 class="sidebar-title">Players</h2>
+    <div id="characterCards">
+      <p class="empty-hint">Start a new session to generate characters.</p>
+    </div>
+  </aside>
+
+  <!-- Center: Game log -->
+  <section class="log-panel">
+    <div class="log-scroll" id="gameLog">
+      <div class="log-entry log-system">
+        <span class="log-content">Welcome to play-dm. Click <strong>New Session</strong> to begin.</span>
+      </div>
+    </div>
+
+    <!-- DM Input -->
+    <form class="input-bar" id="dmForm">
+      <textarea
+        id="dmInput"
+        class="dm-textarea"
+        placeholder="Narrate a scene, describe what happens, ask players to act…"
+        rows="2"
+      ></textarea>
+      <div class="input-actions">
+        <button type="submit" class="btn btn-primary">Send</button>
+        <button type="button" class="btn btn-danger" id="btnStartCombat">⚔ Start Combat</button>
+        <button type="button" class="btn btn-ghost" id="btnRollDice">🎲 Roll Dice</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Right: Combat tracker -->
+  <aside class="sidebar-right" id="combatPanel">
+    <h2 class="sidebar-title">Combat</h2>
+    <div id="combatTracker">
+      <p class="empty-hint">No active combat.</p>
+    </div>
+  </aside>
+
+</main>
+
+<!-- ===== MODALS ===== -->
+
+<!-- New Session Modal -->
+<div class="modal-overlay hidden" id="modalNewSession">
+  <div class="modal">
+    <h2>New Session</h2>
+    <label>Session Name<input type="text" id="inSessionName" value="New Campaign" /></label>
+    <label>Number of Players
+      <select id="inPlayerCount">
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
+    <label>Campaign Theme (optional)<input type="text" id="inTheme" placeholder="e.g. gothic horror, classic dungeon crawl" /></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btnConfirmNewSession">Generate Characters</button>
+      <button class="btn btn-ghost modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Start Combat Modal -->
+<div class="modal-overlay hidden" id="modalStartCombat">
+  <div class="modal">
+    <h2>Start Combat</h2>
+    <p class="modal-hint">Add enemies below. Each row is one enemy type.</p>
+    <div id="enemyList">
+      <div class="enemy-row">
+        <input type="text" placeholder="Name" class="enemy-name" />
+        <input type="number" placeholder="HP" class="enemy-hp" value="10" min="1" />
+        <input type="number" placeholder="AC" class="enemy-ac" value="12" min="1" />
+        <input type="number" placeholder="DEX" class="enemy-dex" value="10" min="1" max="30" />
+        <input type="number" placeholder="Count" class="enemy-count" value="1" min="1" max="10" />
+        <button class="btn btn-ghost btn-sm remove-enemy">✕</button>
+      </div>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="btnAddEnemy">+ Add Enemy</button>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btnConfirmStartCombat">Roll Initiative</button>
+      <button class="btn btn-ghost modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Roll Dice Modal -->
+<div class="modal-overlay hidden" id="modalRollDice">
+  <div class="modal">
+    <h2>Roll Dice</h2>
+    <label>Dice Expression<input type="text" id="inDiceExpr" value="1d20" /></label>
+    <label>Modifier<input type="number" id="inDiceModifier" value="0" /></label>
+    <label>Context (optional)<input type="text" id="inDiceContext" placeholder="e.g. Perception check" /></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btnConfirmRollDice">Roll</button>
+      <button class="btn btn-ghost modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Save Modal -->
+<div class="modal-overlay hidden" id="modalSave">
+  <div class="modal">
+    <h2>Save Game</h2>
+    <label>Filename<input type="text" id="inSaveFilename" value="autosave" /></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btnConfirmSave">Save</button>
+      <button class="btn btn-ghost modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Load Modal -->
+<div class="modal-overlay hidden" id="modalLoad">
+  <div class="modal">
+    <h2>Load Game</h2>
+    <div id="savesList"><p class="empty-hint">No saves found.</p></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Combat Actions (shown when combat active) -->
+<div class="combat-toolbar hidden" id="combatToolbar">
+  <button class="btn btn-primary btn-sm" id="btnNextTurn">Next Turn ▶</button>
+  <button class="btn btn-ghost btn-sm" id="btnEndCombat">End Combat</button>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
