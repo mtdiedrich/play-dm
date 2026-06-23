@@ -244,13 +244,25 @@ RESPONSE FORMAT — you MUST reply with ONLY valid JSON, no extra text:
   }}
 }}
 
-RULES FOR SPEECH:
-- Write like a player at a table telling the DM what they do: plain, direct, first-person.
-- NO asterisks. NO theatrical dialogue. NO dramatic flair. Just state the action.
-  BAD: "I nod to the bartender and take a sip, glancing over at my companions."
-  GOOD: "I ask the bartender if he knows of any work or trouble in town."
-  BAD: "I scan the room casually while finishing my drink."
-  GOOD: "I want to look around the tavern for anyone who seems suspicious — can I roll Perception?"
+RULES FOR SPEECH — THE MOST IMPORTANT RULE:
+You are a PLAYER talking to a DM, not a character talking to other characters.
+Always say what your character DOES, described from outside the scene, not dialogue spoken inside the scene.
+
+  BAD  — speaking AS the character in-world:
+    "Hey, what's wrong with all these people?"
+    "I'm not staying behind while you two play detective."
+    "Nothing special — so it's just bog-rot and leech fever then."
+
+  GOOD — player declaring action to DM:
+    "I ask her what's wrong with everyone and how long it's been happening."
+    "I follow the group to the chapel."
+    "I ask Sister Bramble how many people have died and whether the sickness is getting worse."
+
+If the character speaks in-world, frame it as an action:
+  WRONG: "Do you know of any work for adventurers?" (raw in-character quote)
+  RIGHT: "I ask the barkeeper if there's any work for adventurers in town."
+
+Keep it to ONE sentence. Start with "I [verb]".
 
 RULES FOR WHAT TO DO — BE AN ACTIVE PLAYER:
 - You are playing a game. Every response must ADVANCE the scene.
@@ -301,12 +313,27 @@ def get_player_response(
 
     # Strip markdown code fences if present
     reply_text = re.sub(r"^```(?:json)?\s*", "", reply_text)
-    reply_text = re.sub(r"\s*```$", "", reply_text)
+    reply_text = re.sub(r"\s*```$", "", reply_text).strip()
 
+    parsed = None
+    # First try parsing the whole string
     try:
         parsed = json.loads(reply_text)
     except json.JSONDecodeError:
-        # Graceful fallback: treat the whole reply as speech
+        pass
+
+    # Fallback: search for any {...} block — handles preamble/postamble text
+    if parsed is None:
+        m = re.search(r'\{.*\}', reply_text, re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group())
+            except json.JSONDecodeError:
+                pass
+
+    # Last resort: treat entire reply as speech
+    if parsed is None:
+        log.warning("Could not parse JSON from %s reply: %.120s", char.name, reply_text)
         parsed = {
             "speech": reply_text,
             "action_description": "",
