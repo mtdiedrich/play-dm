@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import sys
 import uuid
 from pathlib import Path
@@ -257,7 +258,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
                 await send_log("dm_narration", text)
 
-                for player_id, char in state.characters.items():
+                player_order = list(state.characters.items())
+                random.shuffle(player_order)
+                for player_id, char in player_order:
                     try:
                         await handle_player_response(char, player_id, text)
                     except Exception as exc:

@@ -214,17 +214,26 @@ function renderColumns(characters) {
   const entries = Object.values(characters);
 
   if (entries.length === 0) {
-    area.innerHTML = '<div class="no-session-hint"><p>Click <strong>New Session</strong> to generate your party.</p></div>';
+    // Only show the no-session hint if no columns have ever been built
+    if (!document.querySelector('.char-column')) {
+      area.innerHTML = '<div class="no-session-hint"><p>Click <strong>New Session</strong> to generate your party.</p></div>';
+    }
     return;
   }
 
-  // Build columns that don't yet exist; update headers for existing ones
+  // Remove the no-session hint if present
+  const hint = area.querySelector('.no-session-hint');
+  if (hint) hint.remove();
+
+  // Build columns that don't exist yet; update headers for existing ones.
+  // Always check the DOM directly — columnMsgLists can get stale.
   entries.forEach((char) => {
-    if (!columnMsgLists[char.id]) {
+    const existingCol = document.getElementById(`col_${char.id}`);
+    if (!existingCol) {
       columnMsgLists[char.id] = true;
-      area.innerHTML = area.querySelector('.no-session-hint') ? '' : area.innerHTML;
       area.appendChild(buildColumn(char));
     } else {
+      columnMsgLists[char.id] = true;
       updateColumnHeader(char);
     }
   });
@@ -235,24 +244,29 @@ function buildColumn(char) {
   col.className = 'char-column';
   col.id = `col_${char.id}`;
 
+  // Plain div — NOT a <form> — so Enter never causes a form submit / page navigation.
   col.innerHTML = `
     ${buildColHeader(char)}
     <div class="col-messages" id="msgs_${char.id}"></div>
-    <form class="col-reply" id="replyForm_${char.id}">
+    <div class="col-reply" id="replyArea_${char.id}">
       <input type="text" class="col-reply-input" id="replyInput_${char.id}"
              placeholder="Reply to ${char.name}…" autocomplete="off" />
-      <button type="submit" class="btn btn-primary btn-sm" title="Send to ${char.name}">↵</button>
-    </form>
+      <button type="button" class="btn btn-primary btn-sm" id="replyBtn_${char.id}"
+              title="Send to ${char.name}">↵</button>
+    </div>
   `;
 
-  // Attach submit handler
-  col.querySelector(`#replyForm_${char.id}`).addEventListener('submit', (ev) => {
-    ev.preventDefault();
+  function doReply() {
     const input = document.getElementById(`replyInput_${char.id}`);
     const text = input.value.trim();
     if (!text) return;
     send({ type: 'dm_reply', player_id: char.id, text });
     input.value = '';
+  }
+
+  col.querySelector(`#replyBtn_${char.id}`).addEventListener('click', doReply);
+  col.querySelector(`#replyInput_${char.id}`).addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); doReply(); }
   });
 
   return col;
